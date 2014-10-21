@@ -8,12 +8,19 @@
 /* NEOPIXEL */
 #define NEOPIN          6
 #define NUMPIXELS      16
-
+#define REFRESH 500
+#define TICKS 4
+#define SCREEN_LINES 5
+#define LINE_CHARS 20
 U8GLIB_SSD1306_128X64 ui(U8G_I2C_OPT_NONE);	// I2C / TWI
 SoftwareSerial gpsSerial(5, 4);
 Adafruit_GPS GPS(&gpsSerial);
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NEOPIN, NEO_GRB + NEO_KHZ800);
 uint8_t satLEDs = 0;
+uint8_t tick = 0;
+uint32_t elapsed = 0;
+char ticks[TICKS] = {'\\' , '|', '/', '-'};
+char text[SCREEN_LINES][LINE_CHARS];
 
 
 
@@ -43,36 +50,27 @@ void draw() {
   // graphic commands to redraw the complete screen should be placed here  
   ui.setFont(u8g_font_unifont);
   //ui.setFont(u8g_font_osb21);
-  ui.setPrintPos(0, 10); 
-  ui.print("Sats: ");
-  ui.print(GPS.satellites);
-  ui.setPrintPos(0, 10+ ui.getFontLineSpacing());
-  ui.print("Got fix? ");
-  ui.print(GPS.fix); 
+  ui.setPrintPos(0, 12); 
+  ui.print(text[0]);
+  ui.setPrintPos(0, 10 + ui.getFontLineSpacing());
+  ui.print(text[1]);
   ui.setPrintPos(0, 23 + ui.getFontLineSpacing());
-  ui.print("Quality: ");
-  ui.print(GPS.fixquality);
-  sprintf(str, "Date: %d/%d/%d", GPS.day, GPS.month, GPS.year);
+  ui.print(text[2]);
   ui.setPrintPos(0, 36 + ui.getFontLineSpacing());
-  ui.print(str);
-  sprintf(str, "Time: %d:%d:%d", GPS.hour, GPS.minute, GPS.seconds);
+  ui.print(text[3]);
   ui.setPrintPos(0, 50 + ui.getFontLineSpacing());
-  ui.print(str);
-}
-
-void timerIsr() {
-  (void)GPS.read();
+  ui.print(text[4]);
 }
 
 void setup(void) {
   Serial.begin(115200);
   GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_BAUD_9600);
   GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
   GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
   GPS.sendCommand(PMTK_API_SET_FIX_CTL_1HZ);
-  GPS.sendCommand(PGCMD_ANTENNA);
-  Timer1.initialize(10000);
-  Timer1.attachInterrupt(timerIsr); 
+  GPS.sendCommand(PGCMD_NOANTENNA);
+
   // assign default color value
   if ( ui.getMode() == U8G_MODE_R3G3B2 ) {
     ui.setColorIndex(255);     // white
@@ -90,20 +88,32 @@ void setup(void) {
   Serial.println("SkiGlove Initialised!");
 }
 
+char str[32];
 void loop(void) {
+  /*GPS Update phase */
+  GPS.read();
   if (GPS.newNMEAreceived()) {
     GPS.parse(GPS.lastNMEA());
-    Serial.print("Location: ");
-      Serial.print(GPS.latitude, 4); Serial.print(GPS.lat);
-      Serial.print(", "); 
-      Serial.print(GPS.longitude, 4); Serial.println(GPS.lon);
+    sprintf(str, "LL: %ld.%ld%c|%ld.%ld%c", GPS.latitude_fixed / 10000000, GPS.lat_min /1000,
+            GPS.lat, GPS.longitude_fixed / 10000000, GPS.long_min/1000, GPS.lon);
+    Serial.println(str);
     }
-  // picture loop
-  ui.firstPage();  
-  do {
-    draw();
-  } while( ui.nextPage() );
-  // rebuild the picture after some delay
+  /* Draw phase (refresh rate ~2HZ)*/
+  if (millis() - elapsed >= REFRESH){
+    sprintf(text[0], (GPS.fix ? "Sats:[%d]| Q:%d %c" : 
+                          "Sats: %d | Q:%d %c"), GPS.satellites, GPS.fixquality, ticks[tick]);
+    sprintf(text[1], "Lat : %ld.%ld%c", GPS.latitude_fixed / 10000000, GPS.lat_min/1000, GPS.lat);
+    sprintf(text[2], "Long: %ld.%ld%c", GPS.longitude_fixed / 10000000, GPS.long_min/ 1000, GPS.lon);
+    sprintf(text[3], "Date: %d/%d/%d", GPS.day, GPS.month, GPS.year);
+    sprintf(text[4], "Time: %d:%d:%d", GPS.hour, GPS.minute, GPS.seconds);
+    ui.firstPage();  
+    do {
+      draw();
+    } while( ui.nextPage());
+    tick = (tick + 1) % TICKS;
+    elapsed = millis();
+  }
+  /* LED Update Phase */
   satLEDs = satLight(satLEDs, GPS.satellites);
 }
 
